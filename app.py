@@ -35,15 +35,21 @@ DEVICE = torch.device(
     else ("mps" if torch.backends.mps.is_available() else "cpu")
 )
 
-# ── Model path: env var takes priority, then repo-relative default ────────────
+# ── Model path: env var takes priority, then repo-relative discovery ─────────
 # On Render, set MODEL_PATH in the environment to the absolute path of the
 # uploaded .pth file, OR use Render Disk and mount at /data/models/.
-MODEL_PATH = Path(
-    os.environ.get(
-        "MODEL_PATH",
-        str(Path(__file__).resolve().parents[2] / "models" / "brain_tumor_efficientnetb0_final.pth"),
-    )
-)
+_MODEL_NAME = "brain_tumor_efficientnetb0_final.pth"
+_APP_DIR = Path(__file__).resolve().parent
+_CANDIDATE_ROOTS = [_APP_DIR, _APP_DIR.parent, _APP_DIR.parent.parent]
+
+def _default_model_path() -> Path:
+    for root in _CANDIDATE_ROOTS:
+        candidate = root / "models" / _MODEL_NAME
+        if candidate.exists():
+            return candidate
+    return _APP_DIR / "models" / _MODEL_NAME
+
+MODEL_PATH = Path(os.environ.get("MODEL_PATH", str(_default_model_path())))
 
 _model = None
 _meta  = None

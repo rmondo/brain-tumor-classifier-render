@@ -11,27 +11,32 @@ services:
     region: oregon          # pick the region closest to your users
     plan: free              # upgrade to 'starter' ($7/mo) for always-on + more RAM
 
-    # ── Build ──────────────────────────────────────────────────────────────
-    buildCommand: pip install -r requirements.txt
+    # ── Build ──────────────────────────────────────────────────────────────────
+    # Step 1: install pinned runtime deps (CPU-only PyTorch, Flask, gunicorn)
+    # Step 2: install this repo as a package so gunicorn can import src.app.app:app
+    #         setup.py also auto-creates src/__init__.py and src/app/__init__.py
+    #         if they are missing from the repo.
+    buildCommand: pip install -r requirements.txt && pip install -e .
 
-    # ── Start ──────────────────────────────────────────────────────────────
-    # gunicorn is the production WSGI server.
-    # --workers 1  — EfficientNet is not fork-safe; keep a single worker.
-    # --timeout 120 — first request loads the 47 MB model; give it headroom.
-    # $PORT is injected by Render automatically.
+    # ── Start ──────────────────────────────────────────────────────────────────
+    # gunicorn resolves src.app.app:app via the package installed by setup.py.
+    # --workers 1  — EfficientNet is not fork-safe across workers.
+    # --timeout 120 — first /predict request loads the 47 MB model; needs headroom.
+    # $PORT is injected by Render automatically; never hard-code it.
     startCommand: gunicorn src.app.app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
 
-    # ── Environment variables ───────────────────────────────────────────────
+    # ── Environment variables ───────────────────────────────────────────────────
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
       - key: MODEL_PATH
         value: /data/models/brain_tumor_efficientnetb0_final.pth
         # ↑ Path on the Render Disk (see 'disk' section below).
-        #   If you are NOT using a Disk, change this to the repo-relative path
-        #   and commit the model file (not recommended for large files).
+        #   Free plan: change to the repo-relative path and commit the model
+        #   via Git LFS, e.g.:
+        #     value: models/brain_tumor_efficientnetb0_final.pth
 
-    # ── Persistent disk for the model weights ──────────────────────────────
+    # ── Persistent disk for the model weights ──────────────────────────────────
     # Render Disks are NOT available on the free plan.
     # On the Starter plan ($7/mo + $0.25/GB), uncomment this block:
     #
@@ -40,12 +45,10 @@ services:
     #   mountPath: /data/models
     #   sizeGB: 1
     #
-    # Then upload the .pth file once via Render Shell:
-    #   render ssh <service-name>
-    #   # inside the shell:
-    #   mkdir -p /data/models
-    #   # upload via scp from your local machine:
-    #   scp brain_tumor_efficientnetb0_final.pth <service>:/data/models/
+    # Then upload the .pth file once:
+    #   bash upload_model.sh
+    # or manually:
+    #   render scp ./models/brain_tumor_efficientnetb0_final.pth <service>:/data/models/
 
-    # ── Health check ───────────────────────────────────────────────────────
+    # ── Health check ───────────────────────────────────────────────────────────
     healthCheckPath: /health

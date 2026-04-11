@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brain Tumor MRI Classifier</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    /* ── Variables ─────────────────────────────────────────────────────── */
+    :root {
+      --bg:        #09090f;
+      --surface:   #111119;
+      --border:    #1e1e2e;
+      --border-hi: #2e2e4e;
+      --text:      #e8e8f0;
+      --muted:     #6b6b8a;
+      --accent:    #4f8aff;
+      --accent-dim:#1a2f5a;
+
+      --glioma:    #e6194b;
+      --menin:     #2ecc71;
+      --pituit:    #4f8aff;
+      --notumor:   #f39c12;
+
+      --radius:    10px;
+      --mono:      'IBM Plex Mono', monospace;
+      --sans:      'Syne', sans-serif;
+
+      /* ── SERVER ENDPOINT ────────────────────────────────────────────────
+         When served by Flask this stays as-is (/predict).
+         When opening index.html directly from the filesystem, change this
+         to your running Flask server URL, e.g.:
+           --predict-url: "http://127.0.0.1:5001/predict";
+         ─────────────────────────────────────────────────────────────────── */
+      --predict-url: "/predict";
+    }
+
+    /* ── Reset / Base ──────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 48px 20px 80px;
+    }
+
+    /* Subtle scan-line texture */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(255,255,255,.012) 2px,
+        rgba(255,255,255,.012) 4px
+      );
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Layout ────────────────────────────────────────────────────────── */
+    .wrapper {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 660px;
+    }
+
+    /* ── Header ────────────────────────────────────────────────────────── */
+    header {
+      margin-bottom: 36px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--accent);
+      background: var(--accent-dim);
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      padding: 3px 10px;
+      letter-spacing: .08em;
+      margin-bottom: 14px;
+      text-transform: uppercase;
+    }
+    .badge::before {
+      content: '';
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .3; }
+    }
+
+    h1 {
+      font-size: clamp(26px, 5vw, 38px);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -.02em;
+      color: var(--text);
+    }
+    h1 em {
+      font-style: normal;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      margin-top: 10px;
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .subtitle span {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    /* ── Upload zone ───────────────────────────────────────────────────── */
+    .drop-zone {
+      position: relative;
+      border: 1.5px dashed var(--border-hi);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 52px 32px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s, transform .15s;
+      overflow: hidden;
+    }
+    .drop-zone::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 0%, rgba(79,138,255,.07) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .drop-zone:hover,
+    .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: #0d0d1a;
+      transform: translateY(-1px);
+    }
+    .drop-zone:active { transform: translateY(0); }
+
+    .drop-icon {
+      font-size: 40px;
+      margin-bottom: 12px;
+      display: block;
+      filter: grayscale(.3);
+    }
+    .drop-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+    .drop-hint {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* ── Spinner ───────────────────────────────────────────────────────── */
+    .spinner-wrap {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      padding: 40px 0;
+    }
+    .spinner-wrap.visible { display: flex; }
+
+    .spinner {
+      width: 36px; height: 36px;
+      border: 2.5px solid var(--border-hi);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .spinner-label {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: .05em;
+    }
+
+    /* ── Result card ───────────────────────────────────────────────────── */
+    .result-card {
+      display: none;
+      margin-top: 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      overflow: hidden;
+      animation: slideUp .3s ease;
+    }
+    .result-card.visible { display: block; }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Preview strip */
+    .preview-strip {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .preview-strip img {
+      width: 90px; height: 90px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid var(--border-hi);
+      flex-shrink: 0;
+    }
+    .pred-info {}
+    .pred-label {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -.02em;
+      line-height: 1.2;
+    }
+    .pred-conf {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .pred-conf strong { color: var(--accent); }
+
+    /* Probability bars */
+    .bars-section {
+      padding: 18px 20px 22px;
+    }
+    .bars-heading {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+    .bar-row {
+      display: grid;
+      grid-template-columns: 120px 1fr 44px;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .bar-name {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+      text-align: right;
+    }
+    .bar-track {
+      height: 8px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width .5s cubic-bezier(.22,1,.36,1);
+    }
+    .bar-pct {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      text-align: right;
+    }
+    /* Winner row */
+    .bar-row.winner .bar-name { color: var(--text); font-weight: 500; }
+    .bar-row.winner .bar-pct  { color: var(--text); }
+
+    /* ── Error ─────────────────────────────────────────────────────────── */
+    .error-box {
+      display: none;
+      margin-top: 16px;
+      padding: 14px 16px;
+      border: 1px solid #5a1a1a;
+      border-radius: var(--radius);
+      background: #1a0909;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: #ff6b6b;
+      line-height: 1.6;
+    }
+    .error-box.visible { display: block; }
+    .error-box strong { display: block; margin-bottom: 4px; color: #ff4444; }
+
+    /* ── Server config notice (file:// only) ───────────────────────────── */
+    .config-notice {
+      display: none;
+      margin-top: 16px;
+      padding: 14px 16px;
+      border: 1px solid #3a3a00;
+      border-radius: var(--radius);
+      background: #1a1a00;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: #cccc44;
+      line-height: 1.7;
+    }
+    .config-notice code {
+      background: rgba(255,255,255,.08);
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    /* ── Footer ────────────────────────────────────────────────────────── */
+    footer {
+      margin-top: 48px;
+      font-size: 11px;
+      color: var(--muted);
+      font-family: var(--mono);
+      text-align: center;
+      line-height: 1.8;
+    }
+    footer a { color: var(--muted); text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<div class="wrapper">
+
+  <!-- Header -->
+  <header>
+    <div class="badge">EfficientNetB0 · PyTorch</div>
+    <h1>Brain Tumor<br><em>MRI Classifier</em></h1>
+    <p class="subtitle">
+      Upload a brain MRI scan to classify as
+      <span>glioma</span>, <span>meningioma</span>,
+      <span>pituitary</span>, or <span>no tumor</span>.
+      For research purposes only.
+    </p>
+  </header>
+
+  <!-- Drop zone -->
+  <div class="drop-zone" id="dropZone" role="button" tabindex="0"
+       aria-label="Upload MRI image">
+    <span class="drop-icon">🧠</span>
+    <div class="drop-title">Drop MRI image here, or click to browse</div>
+    <div class="drop-hint">JPG · PNG · up to 20 MB</div>
+    <input type="file" id="fileInput" accept="image/*" hidden>
+  </div>
+
+  <!-- Spinner -->
+  <div class="spinner-wrap" id="spinnerWrap">
+    <div class="spinner"></div>
+    <div class="spinner-label">Running inference…</div>
+  </div>
+
+  <!-- Result card -->
+  <div class="result-card" id="resultCard">
+    <div class="preview-strip">
+      <img id="previewImg" src="" alt="MRI preview">
+      <div class="pred-info">
+        <div class="pred-label" id="predLabel">—</div>
+        <div class="pred-conf" id="predConf"></div>
+      </div>
+    </div>
+    <div class="bars-section">
+      <div class="bars-heading">Class probabilities</div>
+      <div id="barsContainer"></div>
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div class="error-box" id="errorBox"></div>
+
+  <!-- File:// notice (shown automatically when not served by Flask) -->
+  <div class="config-notice" id="configNotice">
+    <strong>⚠ Opening directly from disk</strong>
+    You are viewing this page via <code>file://</code> rather than through Flask,
+    so <code>/predict</code> cannot be reached.<br>
+    Start the Flask server (<code>python src/app/app.py</code>), then either:<br>
+    &bull; Open <code>http://127.0.0.1:5001</code> in your browser, <strong>or</strong><br>
+    &bull; Edit the <code>--predict-url</code> CSS variable at the top of this file
+    to point to your server, e.g. <code>http://127.0.0.1:5001/predict</code>.
+  </div>
+
+</div><!-- /wrapper -->
+
+<footer>
+  For research and educational purposes only.<br>
+  Do not use as a substitute for clinical diagnosis.
+</footer>
+
+<script>
+  /* ── Constants ─────────────────────────────────────────────────────── */
+  const CLASS_COLORS = {
+    glioma:     getComputedStyle(document.documentElement).getPropertyValue('--glioma').trim()    || '#e6194b',
+    meningioma: getComputedStyle(document.documentElement).getPropertyValue('--menin').trim()     || '#2ecc71',
+    pituitary:  getComputedStyle(document.documentElement).getPropertyValue('--pituit').trim()    || '#4f8aff',
+    notumor:    getComputedStyle(document.documentElement).getPropertyValue('--notumor').trim()   || '#f39c12',
+  };
+
+  /* Read --predict-url from CSS variables so the template can be
+     overridden without touching JavaScript. */
+  const PREDICT_URL = (
+    getComputedStyle(document.documentElement)
+      .getPropertyValue('--predict-url').trim().replace(/^"|"$/g, '')
+  ) || '/predict';
+
+  /* Detect file:// context and warn the user */
+  const IS_FILE_PROTOCOL = location.protocol === 'file:';
+
+  /* ── DOM references ────────────────────────────────────────────────── */
+  const dropZone     = document.getElementById('dropZone');
+  const fileInput    = document.getElementById('fileInput');
+  const spinnerWrap  = document.getElementById('spinnerWrap');
+  const resultCard   = document.getElementById('resultCard');
+  const previewImg   = document.getElementById('previewImg');
+  const predLabel    = document.getElementById('predLabel');
+  const predConf     = document.getElementById('predConf');
+  const barsContainer= document.getElementById('barsContainer');
+  const errorBox     = document.getElementById('errorBox');
+  const configNotice = document.getElementById('configNotice');
+
+  /* ── Show file:// warning on load ─────────────────────────────────── */
+  if (IS_FILE_PROTOCOL) {
+    configNotice.style.display = 'block';
+  }
+
+  /* ── UI helpers ────────────────────────────────────────────────────── */
+  function showSpinner()  { spinnerWrap.classList.add('visible'); }
+  function hideSpinner()  { spinnerWrap.classList.remove('visible'); }
+
+  function showError(msg) {
+    hideSpinner();
+    resultCard.classList.remove('visible');
+    errorBox.innerHTML = '<strong>Error</strong>' + msg;
+    errorBox.classList.add('visible');
+  }
+  function clearError() { errorBox.classList.remove('visible'); }
+
+  function renderResult(data, file) {
+    hideSpinner();
+    clearError();
+
+    /* Preview */
+    previewImg.src = URL.createObjectURL(file);
+
+    /* Prediction label */
+    const cls  = data.predicted_class || '—';
+    const conf = ((data.confidence || 0) * 100).toFixed(1);
+    predLabel.textContent = cls.toUpperCase();
+    predLabel.style.color = CLASS_COLORS[cls] || 'var(--text)';
+    predConf.innerHTML    = 'Confidence: <strong>' + conf + '%</strong>';
+
+    /* Probability bars */
+    barsContainer.innerHTML = '';
+    const probs = data.all_probabilities || {};
+    Object.entries(probs)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([name, prob]) => {
+        const pct     = (prob * 100).toFixed(1);
+        const color   = CLASS_COLORS[name] || '#888';
+        const isWinner= name === cls;
+
+        const row = document.createElement('div');
+        row.className = 'bar-row' + (isWinner ? ' winner' : '');
+        row.innerHTML =
+          '<div class="bar-name">' + name + '</div>' +
+          '<div class="bar-track">' +
+            '<div class="bar-fill" style="width:0%;background:' + color + '" ' +
+                 'data-target="' + pct + '"></div>' +
+          '</div>' +
+          '<div class="bar-pct">' + pct + '%</div>';
+        barsContainer.appendChild(row);
+      });
+
+    resultCard.classList.add('visible');
+
+    /* Animate bars on next tick so CSS transition fires */
+    requestAnimationFrame(() => {
+      document.querySelectorAll('.bar-fill').forEach(el => {
+        el.style.width = el.dataset.target + '%';
+      });
+    });
+  }
+
+  /* ── Core: send file to /predict ───────────────────────────────────── */
+  async function classify(file) {
+    if (!file) return;
+
+    /* Validate client-side before hitting the network */
+    if (!file.type.startsWith('image/')) {
+      showError('Please select a valid image file (JPG or PNG).');
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      showError('File too large. Maximum size is 20 MB.');
+      return;
+    }
+
+    clearError();
+    resultCard.classList.remove('visible');
+    showSpinner();
+
+    const fd = new FormData();
+    fd.append('file', file);
+
+    let res, text;
+    try {
+      res  = await fetch(PREDICT_URL, { method: 'POST', body: fd });
+      text = await res.text();
+    } catch (netErr) {
+      /* Distinguish file:// context from a genuine network failure */
+      if (IS_FILE_PROTOCOL) {
+        showError(
+          'Could not reach the Flask server.<br>' +
+          'Make sure Flask is running (<code>python src/app/app.py</code>) and ' +
+          'open <code>' + PREDICT_URL.replace('/predict','') + '</code> in your browser instead.'
+        );
+      } else {
+        showError('Network error: ' + netErr.message);
+      }
+      return;
+    }
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (_) {
+      showError('Unexpected server response (non-JSON):<br><code>' + text.slice(0, 120) + '</code>');
+      return;
+    }
+
+    if (!res.ok) {
+      showError((data && data.error) ? data.error : 'HTTP ' + res.status);
+      return;
+    }
+
+    renderResult(data, file);
+  }
+
+  /* ── Drag-and-drop ─────────────────────────────────────────────────── */
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') fileInput.click();
+  });
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) classify(fileInput.files[0]);
+  });
+
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drag-over');
+  });
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) classify(file);
+  });
+</script>
+</body>
+</html>

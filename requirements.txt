@@ -1,21 +1,8 @@
-# requirements.txt — Render.com production dependencies
-#
-# PyTorch CPU-only build keeps the slug well under Render's 512 MB RAM limit
-# on the free tier.  The +cpu index URL installs the CPU wheel; remove it
-# (and update the version) if you upgrade to a paid GPU instance.
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.1.0+cpu
-torchvision==0.16.0+cpu
-
-# Model backbone
-efficientnet-pytorch>=0.7.1
-
-# Inference / image processing
-Pillow>=10.0.0
-numpy>=1.24.0
-opencv-python-headless>=4.8.0   # headless — no GUI deps needed on server
-
-# Web server
 flask>=3.0.0
 flask-cors>=4.0.0
 gunicorn>=21.2.0
+numpy>=1.24.0
+Pillow>=10.0.0
+torch==2.11.0
+torchvision==0.26.0
+efficientnet-pytorch>=0.7.1

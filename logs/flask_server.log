@@ -1,0 +1,12 @@
+[INIT] Device      : mps
+[INIT] Model path  : /Users/mondo/work/brain-tumor-classifier-render/models/brain_tumor_efficientnetb0_final.pth
+[INIT] Model exists: True
+[MAIN] Starting on 0.0.0.0:5001
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://192.168.1.113:5001
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [11/Apr/2026 17:12:40] "GET /health HTTP/1.1" 200 -
