@@ -1,8 +1,8 @@
-# Deploying the Brain Tumor MRI Classifier on Render
+# Deploying the Brain Tumor MRI Classifier — Flask Inference Server
 
 ## What you're deploying
 
-The Flask inference server from **notebook Section 18** — the app that:
+The **Flask inference server** (`app.py`) that:
 - serves `GET /` → drag-and-drop MRI upload UI
 - handles `POST /predict` → returns predicted class + all probabilities as JSON
 - exposes `GET /health` → liveness check
@@ -13,10 +13,10 @@ The Flask inference server from **notebook Section 18** — the app that:
 
 | Requirement | Notes |
 |---|---|
-| Trained model checkpoint | Run the notebook through Section 17 to produce `models/brain_tumor_efficientnetb0_final.pth` |
+| Trained model checkpoint | Place at `models/brain_tumor_efficientnetb0_final.pth` — obtained from training pipeline |
 | GitHub / GitLab account | Render deploys from a Git remote |
 | Render account | [render.com](https://render.com) — free tier available |
-| Render CLI (optional) | Needed only for model upload via `upload_model.sh` |
+| Render CLI (optional) | Needed only for model upload on Starter plan via `upload_model.sh` |
 
 ---
 
@@ -25,25 +25,25 @@ The Flask inference server from **notebook Section 18** — the app that:
 Ensure these files exist at your **project root** before pushing:
 
 ```
-brain-tumor-classifier/
+brain-tumor-classifier-render/
 ├── render.yaml                          ← Render Blueprint (auto-configures the service)
-├── requirements.txt                     ← production deps (CPU-only PyTorch)
-├── src/
-│   └── app/
-│       ├── app.py                       ← Flask app (production version)
-│       └── templates/
-│           └── index.html               ← upload UI
+├── requirements.txt                     ← Flask + PyTorch inference deps (CPU-only)
+├── app.py                               ← Flask server (at root, not in src/)
+├── config.py                            ← Minimal config (BASE_DIR, LOG_DIR, FLASK_HOST, FLASK_PORT)
+├── templates/
+│   └── index.html                       ← upload UI (Flask serves from root)
+├── static/                              ← optional: static assets
 └── models/
-    └── brain_tumor_efficientnetb0_final.pth   ← trained weights (see model section)
+    └── brain_tumor_efficientnetb0_final.pth   ← trained weights
 ```
 
 ---
 
-## Step 1 — Prepare the repository
+## Step 1 — Verify the repository
 
 ```bash
 # From your project root
-git add render.yaml requirements.txt src/app/app.py src/app/templates/index.html
+git add render.yaml requirements.txt app.py config.py templates/index.html
 git commit -m "Add Render deployment files"
 git push origin main
 ```
@@ -71,10 +71,10 @@ git push origin main
 |---|---|
 | **Runtime** | Python 3 |
 | **Build Command** | `pip install -r requirements.txt` |
-| **Start Command** | `gunicorn src.app.app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120` |
+| **Start Command** | `gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120` |
 | **Plan** | Free (or Starter for always-on) |
 
-3. Add environment variable:
+3. Add environment variable (optional — `app.py` auto-discovers model):
 
 | Key | Value |
 |---|---|
@@ -135,7 +135,7 @@ brew install render        # macOS
 render login
 
 # Upload (replace <service-name> with your Render service name)
-render scp ./models/brain_tumor_efficientnetb0_final.pth <service-name>:/data/models/
+render scp ./models/brain_tumor_efficientnetb0_final.pth brain-tumor-classifier-render:/data/models/
 
 # Or use the convenience script included in this repo:
 bash upload_model.sh
@@ -143,7 +143,7 @@ bash upload_model.sh
 
 Verify it landed:
 ```bash
-render ssh <service-name> -- ls -lh /data/models/
+render ssh brain-tumor-classifier-render -- ls -lh /data/models/
 ```
 
 ---
@@ -154,17 +154,17 @@ Once the build goes green, hit your service URL:
 
 ```bash
 # Health check — confirms the server is up and the model is found
-curl https://<your-service>.onrender.com/health
-# Expected: {"status":"ok","device":"cpu","model_loaded":false}
+curl https://brain-tumor-classifier-render.onrender.com/health
+# Expected: {"status":"ok","device":"cpu","model_loaded":true}
 # model_loaded becomes true after the first /predict request triggers lazy load
 
 # Test inference
-curl -X POST https://<your-service>.onrender.com/predict \
+curl -X POST https://brain-tumor-classifier-render.onrender.com/predict \
      -F "file=@/path/to/test_mri.jpg"
 # Expected: {"predicted_class":"glioma","confidence":0.94,"all_probabilities":{...}}
 
 # Open the UI
-open https://<your-service>.onrender.com
+open https://brain-tumor-classifier-render.onrender.com
 ```
 
 ---
@@ -174,7 +174,7 @@ open https://<your-service>.onrender.com
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `PORT` | Auto | set by Render | Port gunicorn binds to — **do not set manually** |
-| `MODEL_PATH` | Yes | repo-relative default | Absolute path to the `.pth` checkpoint |
+| `MODEL_PATH` | No | auto-discovered | Absolute path to the `.pth` checkpoint; `app.py` searches `models/` first |
 | `MODEL_DOWNLOAD_URL` | Only if using build-time download | — | Pre-signed URL or public URL to fetch weights during build |
 
 ---
@@ -196,8 +196,8 @@ Upgrade to the **Starter** plan ($7/mo) for always-on instances and Disk support
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Build fails: `No matching distribution for torch` | CUDA wheel requested on CPU instance | Ensure `requirements.txt` uses `+cpu` wheels (already done in this repo) |
-| `FileNotFoundError: Checkpoint not found` | `MODEL_PATH` env var wrong or file not uploaded | Check `MODEL_PATH` in dashboard → Environment; re-run `upload_model.sh` |
+| Build fails: `No matching distribution for torch` | Older torch version pinned | Ensure `requirements.txt` pins `torch==2.11.0  torchvision==0.26.0` (both available on PyPI) |
+| `FileNotFoundError: Checkpoint not found` | `MODEL_PATH` env var wrong or file not uploaded | Check `MODEL_PATH` in dashboard → Environment; re-run `upload_model.sh`; or place at `models/` in repo |
 | `502 Bad Gateway` on first request | gunicorn timeout during model load | Increase `--timeout` in start command (already 120 s) |
 | App spins up but `/predict` returns 500 | `backbone.` key mismatch | The `app.py` in this repo already strips the prefix; make sure you're using this version |
 | Free tier cold start is very slow | Normal — model loading takes ~10 s on CPU | Use Starter plan for always-on, or pre-warm with a scheduled health-check ping |
@@ -213,7 +213,7 @@ After retraining, upload the new weights and redeploy:
 bash upload_model.sh
 
 # Trigger a redeploy (or just push any commit)
-render deploys create <service-name>
+render deploys create brain-tumor-classifier-render
 ```
 
 ---
