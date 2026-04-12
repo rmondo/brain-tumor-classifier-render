@@ -89,7 +89,9 @@ def _load_model():
     _meta = ckpt
 
     n_cls, drop = ckpt["num_classes"], ckpt["dropout"]
-    backbone    = EfficientNet.from_pretrained("efficientnet-b0", num_classes=n_cls)
+    # from_name avoids an unnecessary internet download — all weights come from
+    # the checkpoint via load_state_dict() below.
+    backbone    = EfficientNet.from_name("efficientnet-b0", num_classes=n_cls)
     in_f        = backbone._fc.in_features
     backbone._fc = nn.Sequential(
         nn.BatchNorm1d(in_f), nn.Dropout(drop),
