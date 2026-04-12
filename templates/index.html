@@ -140,19 +140,26 @@
         const fd = new FormData();
         fd.append("file", fileInput.files[0]);
 
-        const res = await fetch("/predict", { method: "POST", body: fd });
-        const data = await res.json();
+        let res, text;
+        try {
+          res  = await fetch("/predict", { method: "POST", body: fd });
+          text = await res.text();
+        } catch (netErr) {
+          setStatus("Network error — server may still be loading.", "err");
+          output.textContent = String(netErr) + "\n\nTip: wait a moment and try again. The model loads on the first request.";
+          return;
+        }
+
+        let data;
+        try { data = JSON.parse(text); } catch (_) { data = { error: text.slice(0, 400) }; }
 
         if (!res.ok) {
-          setStatus("Prediction failed.", "err");
+          setStatus("Prediction failed (HTTP " + res.status + ").", "err");
           output.textContent = JSON.stringify(data, null, 2);
         } else {
           setStatus("Prediction completed.", "ok");
           output.textContent = JSON.stringify(data, null, 2);
         }
-      } catch (err) {
-        setStatus("Request failed.", "err");
-        output.textContent = String(err);
       } finally {
         submitBtn.disabled = false;
       }
