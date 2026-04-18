@@ -1,47 +1,54 @@
-from pathlib import Path
 import os
-import sys
 from typing import Dict, List, Tuple
 
 import numpy as np
 from PIL import Image
 import torch
 import torch.nn as nn
-
-# Ensure project imports work whether this file is run from repo root,
-# a scripts directory, or an app entrypoint.
-CWD = Path.cwd().resolve()
-THIS_FILE = Path(__file__).resolve()
-CANDIDATES = [THIS_FILE.parent, CWD, THIS_FILE.parent.parent, CWD.parent]
-REPO_ROOT = next((p for p in CANDIDATES if (p / "pyproject.toml").exists()), THIS_FILE.parent)
-NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
-for p in [REPO_ROOT, NOTEBOOKS_DIR]:
-    if p.exists() and str(p) not in sys.path:
-        sys.path.insert(0, str(p))
-
-from brain_tumor import config as cfg
-from brain_tumor.data.dataset import get_val_transform
-from brain_tumor.models.classifier import BrainTumorClassifier
+from torchvision import models, transforms
 
 
-CLASS_NAMES = cfg.CLASS_NAMES
-IMAGE_SIZE = cfg.IMG_SIZE
-INFERENCE_TRANSFORM = get_val_transform()
+CLASS_NAMES = ["glioma", "meningioma", "pituitary", "notumor"]
+IMAGE_SIZE = (224, 224)
+DROPOUT = 0.30
+
+INFERENCE_TRANSFORM = transforms.Compose(
+    [
+        transforms.Resize(IMAGE_SIZE),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ]
+)
+
+class BrainTumorClassifier(nn.Module):
+    def __init__(self, num_classes: int, dropout: float = 0.30):
+        super().__init__()
+        self.backbone = models.efficientnet_b0(weights=None)
+        in_features = self.backbone.classifier[1].in_features
+        self.backbone.classifier = nn.Sequential(
+            nn.Dropout(p=dropout),
+            nn.Linear(in_features, num_classes),
+        )
+
+    def forward(self, x):
+        return self.backbone(x)
 
 
 def build_model(num_classes: int) -> nn.Module:
-    model = BrainTumorClassifier(num_classes, cfg.DROPOUT)
-    return model
+    return BrainTumorClassifier(num_classes, DROPOUT)
 
 
 def _extract_state_dict(checkpoint: object) -> dict:
     if isinstance(checkpoint, dict):
-        for key in ("state_dict", "model_state_dict"):
+        for key in ("model_state_dict", "state_dict"):
             if key in checkpoint and isinstance(checkpoint[key], dict):
                 return checkpoint[key]
         if all(isinstance(k, str) for k in checkpoint.keys()):
             return checkpoint
-    raise TypeError("Unsupported checkpoint format: expected state_dict or checkpoint dict")
+    raise TypeError("Unsupported checkpoint format")
 
 
 def load_checkpoint_into_model(
@@ -65,8 +72,7 @@ def load_checkpoint_into_model(
     missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=True)
     if missing or unexpected:
         raise RuntimeError(
-            f"Checkpoint mismatch while loading {checkpoint_path}. "
-            f"Missing keys: {missing} | Unexpected keys: {unexpected}"
+            f"Checkpoint mismatch. Missing keys: {missing} | Unexpected keys: {unexpected}"
         )
 
     model.to(device)
@@ -75,13 +81,6 @@ def load_checkpoint_into_model(
 
 
 def get_gradcam_target_layer(model: nn.Module) -> nn.Module:
-    """
-    Return the best layer for Grad-CAM.
-
-    Prefer the last convolutional feature layer from common wrapper structures,
-    and fall back to the final Conv2d found anywhere in the model.
-    """
-    # Common wrapper patterns first.
     common_paths = [
         ["backbone", "features"],
         ["model", "features"],
@@ -102,7 +101,6 @@ def get_gradcam_target_layer(model: nn.Module) -> nn.Module:
             except Exception:
                 pass
 
-    # Robust fallback: last Conv2d anywhere in the model.
     last_conv = None
     for module in model.modules():
         if isinstance(module, nn.Conv2d):
