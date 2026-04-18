@@ -8,7 +8,7 @@ import torch.nn as nn
 from torchvision import models, transforms
 
 
-CLASS_NAMES = ["glioma", "meningioma", "pituitary", "no_tumor"]
+CLASS_NAMES = ["glioma", "meningioma", "pituitary", "notumor"]
 IMAGE_SIZE = (224, 224)
 
 INFERENCE_TRANSFORM = transforms.Compose(
