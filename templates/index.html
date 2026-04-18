@@ -1,167 +1,297 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Brain Tumor MRI Classifier</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeuroScan AI Upload</title>
   <style>
     :root {
-      --bg: #f7f8fb;
-      --card: #ffffff;
-      --text: #1e2430;
-      --muted: #5b6475;
-      --accent: #1565c0;
-      --accent-2: #0d47a1;
-      --border: #d9dfeb;
-      --ok: #0b7a4b;
-      --err: #b71c1c;
+      --bg: #0b1020;
+      --panel: #121a33;
+      --panel-2: #1a2445;
+      --text: #e8ecf7;
+      --muted: #aab3cc;
+      --accent: #6ea8fe;
+      --accent-2: #8ef0c0;
+      --danger: #ff8c8c;
+      --border: #2d3b69;
     }
-
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: linear-gradient(180deg, #f5f7fc 0%, #edf2fa 100%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(180deg, #0b1020 0%, #0f1630 100%);
       color: var(--text);
       min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 20px;
     }
-
+    .wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
     .card {
-      width: min(760px, 100%);
-      background: var(--card);
+      background: rgba(18, 26, 51, 0.96);
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 18px;
+      box-shadow: 0 20px 50px rgba(0,0,0,.25);
       padding: 24px;
-      box-shadow: 0 16px 42px rgba(16, 24, 40, 0.08);
+      margin-bottom: 20px;
     }
-
     h1 {
       margin: 0 0 8px;
-      font-size: 1.6rem;
+      font-size: 2rem;
     }
-
     p {
-      margin: 0 0 16px;
       color: var(--muted);
+      line-height: 1.55;
     }
-
     .row {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-bottom: 14px;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
     }
-
-    input[type="file"] {
-      flex: 1;
-      min-width: 240px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px;
-      background: #fff;
-    }
-
-    button {
-      border: 0;
-      border-radius: 10px;
+    .btn {
+      display: inline-block;
+      border: none;
+      border-radius: 12px;
+      padding: 12px 18px;
       background: var(--accent);
-      color: #fff;
-      padding: 10px 16px;
-      font-weight: 600;
+      color: #071023;
+      font-weight: 700;
       cursor: pointer;
+      transition: transform .08s ease, opacity .2s ease;
     }
-
-    button:hover { background: var(--accent-2); }
-    button:disabled { opacity: 0.6; cursor: not-allowed; }
-
-    pre {
-      margin: 0;
-      background: #0f172a;
-      color: #e2e8f0;
-      border-radius: 10px;
+    .btn:hover { opacity: .95; }
+    .btn:active { transform: scale(.98); }
+    .btn.secondary {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    input[type="file"] {
+      width: 100%;
       padding: 14px;
-      overflow: auto;
-      min-height: 76px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      color: var(--text);
     }
-
+    .preview {
+      width: 100%;
+      min-height: 260px;
+      display: grid;
+      place-items: center;
+      border: 1px dashed var(--border);
+      border-radius: 16px;
+      background: rgba(255,255,255,.02);
+      overflow: hidden;
+    }
+    .preview img {
+      width: 100%;
+      height: auto;
+      display: block;
+      object-fit: contain;
+    }
+    .muted { color: var(--muted); }
     .status {
-      margin: 8px 0 12px;
-      font-size: 0.92rem;
+      min-height: 24px;
       font-weight: 600;
     }
-
-    .ok { color: var(--ok); }
-    .err { color: var(--err); }
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--accent-2); }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #0a0f1f;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      color: #d8def0;
+      overflow-x: auto;
+    }
+    .result-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    .gradcam-box {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      background: #0a0f1f;
+      min-height: 220px;
+      display: grid;
+      place-items: center;
+    }
+    .gradcam-box img {
+      display: block;
+      width: 100%;
+      height: auto;
+      object-fit: contain;
+    }
+    .pill {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(110,168,254,.12);
+      color: var(--accent);
+      border: 1px solid rgba(110,168,254,.25);
+      font-size: .9rem;
+      font-weight: 700;
+    }
+    @media (min-width: 860px) {
+      .result-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
   </style>
 </head>
 <body>
-  <main class="card">
-    <h1>Brain Tumor MRI Classifier</h1>
-    <p>Upload an MRI image and run inference using the loaded model checkpoint.</p>
+  <div class="wrap">
+    <div class="card">
+      <span class="pill">NeuroScan AI Backend Test Page</span>
+      <h1>Upload Brain MRI Image</h1>
+      <p>
+        Use this page to test the Flask/PyTorch backend locally or on Render.
+        It sends the selected image to <code>POST /predict</code> with form field <code>file</code>,
+        then displays the JSON response and Grad-CAM image if present.
+      </p>
+    </div>
 
-    <form id="predict-form">
+    <div class="card">
       <div class="row">
-        <input id="file" type="file" accept="image/*" required />
-        <button id="submit-btn" type="submit">Predict</button>
+        <input id="fileInput" type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png">
+        <div class="preview" id="previewBox">
+          <span class="muted">Selected MRI image preview will appear here.</span>
+        </div>
+        <div>
+          <button class="btn" id="predictBtn">Run Prediction</button>
+          <button class="btn secondary" id="healthBtn" type="button">Check /health</button>
+        </div>
+        <div class="status" id="status"></div>
       </div>
-    </form>
+    </div>
 
-    <div id="status" class="status"></div>
-    <pre id="output">Waiting for input...</pre>
-  </main>
+    <div class="result-grid">
+      <div class="card">
+        <h2>Response JSON</h2>
+        <pre id="jsonOutput">No result yet.</pre>
+      </div>
+
+      <div class="card">
+        <h2>Grad-CAM</h2>
+        <div class="gradcam-box" id="gradcamBox">
+          <span class="muted">Grad-CAM image will appear here if returned by the server.</span>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script>
-    const form = document.getElementById("predict-form");
-    const fileInput = document.getElementById("file");
-    const output = document.getElementById("output");
-    const status = document.getElementById("status");
-    const submitBtn = document.getElementById("submit-btn");
+    const fileInput = document.getElementById("fileInput");
+    const previewBox = document.getElementById("previewBox");
+    const predictBtn = document.getElementById("predictBtn");
+    const healthBtn = document.getElementById("healthBtn");
+    const statusEl = document.getElementById("status");
+    const jsonOutput = document.getElementById("jsonOutput");
+    const gradcamBox = document.getElementById("gradcamBox");
 
-    const setStatus = (text, kind = "") => {
-      status.textContent = text;
-      status.className = `status ${kind}`.trim();
-    };
+    function setStatus(message, kind = "") {
+      statusEl.textContent = message;
+      statusEl.className = "status" + (kind ? " " + kind : "");
+    }
 
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!fileInput.files || !fileInput.files[0]) {
-        setStatus("Select an image first.", "err");
+    function renderPreview(file) {
+      const reader = new FileReader();
+      reader.onload = e => {
+        previewBox.innerHTML = "";
+        const img = document.createElement("img");
+        img.src = e.target.result;
+        img.alt = "Selected MRI preview";
+        previewBox.appendChild(img);
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function renderGradCAM(data) {
+      gradcamBox.innerHTML = "";
+      if (data.grad_cam_base64) {
+        const img = document.createElement("img");
+        img.src = "data:image/png;base64," + data.grad_cam_base64;
+        img.alt = "Grad-CAM";
+        gradcamBox.appendChild(img);
         return;
       }
 
-      submitBtn.disabled = true;
-      setStatus("Running prediction...");
-      output.textContent = "";
+      if (data.grad_cam_url) {
+        const img = document.createElement("img");
+        img.src = data.grad_cam_url;
+        img.alt = "Grad-CAM";
+        gradcamBox.appendChild(img);
+        return;
+      }
+
+      const msg = document.createElement("span");
+      msg.className = "muted";
+      msg.textContent = "Grad-CAM was not returned by the server for this result.";
+      gradcamBox.appendChild(msg);
+    }
+
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      renderPreview(file);
+      setStatus("Image selected.", "ok");
+    });
+
+    predictBtn.addEventListener("click", async () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) {
+        setStatus("Please choose a JPEG or PNG image first.", "error");
+        return;
+      }
+
+      setStatus("Uploading image and running prediction...", "");
+      jsonOutput.textContent = "Waiting for response...";
+      gradcamBox.innerHTML = '<span class="muted">Waiting for Grad-CAM...</span>';
+
+      const formData = new FormData();
+      formData.append("file", file);
 
       try {
-        const fd = new FormData();
-        fd.append("file", fileInput.files[0]);
+        const response = await fetch("/predict", {
+          method: "POST",
+          body: formData
+        });
 
-        let res, text;
-        try {
-          res  = await fetch("/predict", { method: "POST", body: fd });
-          text = await res.text();
-        } catch (netErr) {
-          setStatus("Network error — server may still be loading.", "err");
-          output.textContent = String(netErr) + "\n\nTip: wait a moment and try again. The model loads on the first request.";
+        const data = await response.json();
+        jsonOutput.textContent = JSON.stringify(data, null, 2);
+
+        if (!response.ok) {
+          setStatus("Prediction failed. See JSON response for details.", "error");
+          renderGradCAM({});
           return;
         }
 
-        let data;
-        try { data = JSON.parse(text); } catch (_) { data = { error: text.slice(0, 400) }; }
+        renderGradCAM(data);
+        setStatus("Prediction completed successfully.", "ok");
+      } catch (error) {
+        jsonOutput.textContent = String(error);
+        renderGradCAM({});
+        setStatus("Network or server error while calling /predict.", "error");
+      }
+    });
 
-        if (!res.ok) {
-          setStatus("Prediction failed (HTTP " + res.status + ").", "err");
-          output.textContent = JSON.stringify(data, null, 2);
-        } else {
-          setStatus("Prediction completed.", "ok");
-          output.textContent = JSON.stringify(data, null, 2);
-        }
-      } finally {
-        submitBtn.disabled = false;
+    healthBtn.addEventListener("click", async () => {
+      setStatus("Checking /health...", "");
+      try {
+        const response = await fetch("/health");
+        const data = await response.json();
+        jsonOutput.textContent = JSON.stringify(data, null, 2);
+        setStatus(response.ok ? "Health check passed." : "Health check returned an error.", response.ok ? "ok" : "error");
+      } catch (error) {
+        jsonOutput.textContent = String(error);
+        setStatus("Could not reach /health.", "error");
       }
     });
   </script>
