@@ -17,3 +17,5 @@ ipykernel>=6.29,<7
 tensorboard>=2.16,<2.18
 
 opencv-python-headless>=4.9,<4.11
+
+efficientnet-pytorch==0.7.1
