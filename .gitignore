@@ -16,7 +16,8 @@ datasets/
 # Models
 models/
 *.pt
-*.pth
+best_stage1.pth
+best_stage2.pth
 *.h5
 *.keras
 
