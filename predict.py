@@ -5,12 +5,12 @@ import numpy as np
 from PIL import Image
 import torch
 import torch.nn as nn
-from torchvision import models, transforms
+from torchvision import transforms
+from efficientnet_pytorch import EfficientNet
 
 
 CLASS_NAMES = ["glioma", "meningioma", "pituitary", "notumor"]
 IMAGE_SIZE = (224, 224)
-DROPOUT = 0.30
 
 INFERENCE_TRANSFORM = transforms.Compose(
     [
@@ -23,39 +23,91 @@ INFERENCE_TRANSFORM = transforms.Compose(
     ]
 )
 
+
 class BrainTumorClassifier(nn.Module):
-    def __init__(self, num_classes: int, dropout: float = 0.30):
+    def __init__(self, num_classes: int):
         super().__init__()
-        self.backbone = models.efficientnet_b0(weights=None)
-        in_features = self.backbone.classifier[1].in_features
-        self.backbone.classifier = nn.Sequential(
-            nn.Dropout(p=dropout),
-            nn.Linear(in_features, num_classes),
-        )
+        self.backbone = EfficientNet.from_name("efficientnet-b0")
+
+        # Temporary placeholder; real head can be replaced from checkpoint.
+        in_features = self.backbone._fc.in_features
+        self.backbone._fc = nn.Linear(in_features, num_classes)
 
     def forward(self, x):
         return self.backbone(x)
 
 
 def build_model(num_classes: int) -> nn.Module:
-    return BrainTumorClassifier(num_classes, DROPOUT)
+    return BrainTumorClassifier(num_classes)
 
 
 def _extract_state_dict(checkpoint: object) -> dict:
     if isinstance(checkpoint, dict):
-        for key in ("model_state_dict", "state_dict"):
-            if key in checkpoint and isinstance(checkpoint[key], dict):
-                return checkpoint[key]
+        if "model_state_dict" in checkpoint and isinstance(checkpoint["model_state_dict"], dict):
+            return checkpoint["model_state_dict"]
+        if "state_dict" in checkpoint and isinstance(checkpoint["state_dict"], dict):
+            return checkpoint["state_dict"]
         if all(isinstance(k, str) for k in checkpoint.keys()):
             return checkpoint
     raise TypeError("Unsupported checkpoint format")
+
+
+def _rebuild_fc_from_checkpoint(model: nn.Module, state_dict: dict) -> None:
+    """
+    If checkpoint uses a sequential EfficientNet head like:
+      backbone._fc.0 = BatchNorm1d
+      backbone._fc.2 = Linear
+      backbone._fc.4 = BatchNorm1d
+      backbone._fc.6 = Linear
+    then rebuild model.backbone._fc to match those saved shapes exactly.
+    """
+    keys = state_dict.keys()
+
+    # Detect the sequential head pattern.
+    has_seq_head = (
+        "backbone._fc.0.weight" in keys
+        and "backbone._fc.2.weight" in keys
+        and "backbone._fc.4.weight" in keys
+        and "backbone._fc.6.weight" in keys
+    )
+
+    if not has_seq_head:
+        return
+
+    bn0_features = state_dict["backbone._fc.0.weight"].shape[0]
+    lin2_out = state_dict["backbone._fc.2.weight"].shape[0]
+    bn4_features = state_dict["backbone._fc.4.weight"].shape[0]
+    lin6_out = state_dict["backbone._fc.6.weight"].shape[0]
+
+    # Linear weight shape is [out_features, in_features]
+    lin2_in = state_dict["backbone._fc.2.weight"].shape[1]
+    lin6_in = state_dict["backbone._fc.6.weight"].shape[1]
+
+    if bn0_features != lin2_in:
+        raise RuntimeError(
+            f"Checkpoint head mismatch: bn0_features={bn0_features} but lin2_in={lin2_in}"
+        )
+    if bn4_features != lin6_in:
+        raise RuntimeError(
+            f"Checkpoint head mismatch: bn4_features={bn4_features} but lin6_in={lin6_in}"
+        )
+
+    model.backbone._fc = nn.Sequential(
+        nn.BatchNorm1d(bn0_features),   # 0
+        nn.ReLU(inplace=True),          # 1
+        nn.Linear(lin2_in, lin2_out),   # 2
+        nn.ReLU(inplace=True),          # 3
+        nn.BatchNorm1d(bn4_features),   # 4
+        nn.ReLU(inplace=True),          # 5
+        nn.Linear(lin6_in, lin6_out),   # 6
+    )
 
 
 def load_checkpoint_into_model(
     model: nn.Module,
     checkpoint_path: str,
     device: torch.device,
-) -> nn.Module:
+) -> None:
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(checkpoint_path)
 
@@ -69,7 +121,11 @@ def load_checkpoint_into_model(
             new_key = new_key[len("module."):]
         cleaned_state_dict[new_key] = value
 
+    # Rebuild the classifier head to match checkpoint structure before loading.
+    _rebuild_fc_from_checkpoint(model, cleaned_state_dict)
+
     missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=True)
+
     if missing or unexpected:
         raise RuntimeError(
             f"Checkpoint mismatch. Missing keys: {missing} | Unexpected keys: {unexpected}"
@@ -77,39 +133,10 @@ def load_checkpoint_into_model(
 
     model.to(device)
     model.eval()
-    return model
 
 
 def get_gradcam_target_layer(model: nn.Module) -> nn.Module:
-    common_paths = [
-        ["backbone", "features"],
-        ["model", "features"],
-        ["features"],
-    ]
-    for path in common_paths:
-        obj = model
-        ok = True
-        for attr in path:
-            if hasattr(obj, attr):
-                obj = getattr(obj, attr)
-            else:
-                ok = False
-                break
-        if ok:
-            try:
-                return obj[-1]
-            except Exception:
-                pass
-
-    last_conv = None
-    for module in model.modules():
-        if isinstance(module, nn.Conv2d):
-            last_conv = module
-
-    if last_conv is not None:
-        return last_conv
-
-    raise AttributeError("Unable to locate a Conv2d target layer for Grad-CAM on model")
+    return model.backbone._conv_head
 
 
 def prepare_image(
@@ -130,7 +157,7 @@ def run_prediction(
 ) -> Tuple[int, str, float, Dict[str, float]]:
     model.eval()
     logits = model(input_tensor)
-    probabilities = torch.softmax(logits, dim=1)[0].detach().cpu().numpy()
+    probabilities = torch.softmax(logits, dim=1)[0].cpu().numpy()
 
     pred_idx = int(np.argmax(probabilities))
     predicted_class = class_names[pred_idx]
