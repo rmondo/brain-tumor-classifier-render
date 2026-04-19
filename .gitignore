@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data (VERY IMPORTANT)
+brain_tumor/
+data/
+datasets/
+*.csv
+*.zip
+*.egg-info
+
+# Models
+models/
+*.pt
+*.pth
+*.h5
+*.keras
+
+# TensorBoard
+runs/
+logs/
+
+# OS junk
+.DS_Store
+
+# Env
+.env
+venv/
