@@ -15,6 +15,7 @@ from predict import (
 )
 from gradcam import generate_gradcam_base64
 
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.environ.get(
     "MODEL_PATH",
@@ -22,6 +23,14 @@ MODEL_PATH = os.environ.get(
 )
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Environment-aware mode:
+#   APP_ENV=development  -> local Debug behavior
+#   APP_ENV=production   -> release / deployed behavior
+APP_ENV = os.environ.get("APP_ENV", "development").strip().lower()
+IS_DEBUG = APP_ENV in {"dev", "debug", "development", "local"}
+
+SERVICE_NAME = "NeuroScan AI LOCAL FLASK" if IS_DEBUG else "NeuroScan AI"
 
 app = Flask(__name__)
 
@@ -46,9 +55,10 @@ def index():
     except Exception:
         return jsonify(
             {
-                "service": "NeuroScan AI",
+                "service": SERVICE_NAME,
                 "status": "ok",
                 "message": "Upload a brain MRI image to POST /predict using form field 'file'.",
+                "environment": APP_ENV,
             }
         )
 
@@ -58,9 +68,11 @@ def health():
     return jsonify(
         {
             "status": "ok",
+            "service": SERVICE_NAME,
+            "environment": APP_ENV,
             "device": str(DEVICE),
             "model_loaded": _model is not None,
-            "model_path": MODEL_PATH,
+            "model_path": MODEL_PATH if IS_DEBUG else os.path.basename(MODEL_PATH),
         }
     )
 
@@ -110,22 +122,23 @@ def predict():
         ), 200
 
     except FileNotFoundError:
-        return jsonify(
-            {
-                "error": "Model checkpoint not found.",
-                "model_path": MODEL_PATH,
-            }
-        ), 500
+        payload = {
+            "error": "Model checkpoint not found.",
+        }
+        if IS_DEBUG:
+            payload["model_path"] = MODEL_PATH
+        return jsonify(payload), 500
+
     except Exception as exc:
-        return jsonify(
-            {
-                "error": str(exc),
-                "type": exc.__class__.__name__,
-                "traceback": traceback.format_exc(),
-            }
-        ), 500
+        payload = {
+            "error": str(exc),
+            "type": exc.__class__.__name__,
+        }
+        if IS_DEBUG:
+            payload["traceback"] = traceback.format_exc()
+        return jsonify(payload), 500
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    port = int(os.environ.get("PORT", 5050 if IS_DEBUG else 5000))
+    app.run(host="0.0.0.0", port=port, debug=IS_DEBUG)
