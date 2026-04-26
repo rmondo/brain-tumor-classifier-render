@@ -1,3 +1,4 @@
+import gc
 import os
 import traceback
 
@@ -15,7 +16,6 @@ from predict import (
 )
 from gradcam import generate_gradcam_base64
 
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.environ.get(
     "MODEL_PATH",
@@ -23,28 +23,31 @@ MODEL_PATH = os.environ.get(
 )
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+torch.set_num_threads(int(os.environ.get("TORCH_NUM_THREADS", "1")))
 
-# Environment-aware mode:
-#   APP_ENV=development  -> local Debug behavior
-#   APP_ENV=production   -> release / deployed behavior
 APP_ENV = os.environ.get("APP_ENV", "development").strip().lower()
 IS_DEBUG = APP_ENV in {"dev", "debug", "development", "local"}
-
 SERVICE_NAME = "NeuroScan AI LOCAL FLASK" if IS_DEBUG else "NeuroScan AI"
 
 app = Flask(__name__)
+
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "6"))
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 _model = None
 
 
 def get_model() -> torch.nn.Module:
+    """Load model exactly once per worker. Do not load inside every /predict request."""
     global _model
     if _model is None:
+        print("Loading NeuroScan AI model...")
         model = build_model(num_classes=len(CLASS_NAMES))
         load_checkpoint_into_model(model, MODEL_PATH, DEVICE)
         model.to(DEVICE)
         model.eval()
         _model = model
+        print("Model loaded.")
     return _model
 
 
@@ -73,13 +76,35 @@ def health():
             "device": str(DEVICE),
             "model_loaded": _model is not None,
             "model_path": MODEL_PATH if IS_DEBUG else os.path.basename(MODEL_PATH),
+            "max_upload_mb": MAX_UPLOAD_MB,
         }
     )
 
 
+@app.errorhandler(413)
+def file_too_large(_error):
+    return jsonify(
+        {
+            "error": f"Uploaded file is too large. Limit is {MAX_UPLOAD_MB} MB.",
+            "type": "PayloadTooLarge",
+        }
+    ), 413
+
+
 @app.route("/predict", methods=["POST"])
 def predict():
+    input_tensor = None
+    original_rgb = None
+
     try:
+        if request.content_length and request.content_length > app.config["MAX_CONTENT_LENGTH"]:
+            return jsonify(
+                {
+                    "error": f"Uploaded file is too large. Limit is {MAX_UPLOAD_MB} MB.",
+                    "type": "PayloadTooLarge",
+                }
+            ), 413
+
         if "file" not in request.files:
             return jsonify({"error": "Missing upload field 'file'."}), 400
 
@@ -93,7 +118,6 @@ def predict():
             return jsonify({"error": "Uploaded file is not a valid image."}), 400
 
         model = get_model()
-
         input_tensor, original_rgb = prepare_image(image=image, device=DEVICE)
 
         pred_idx, predicted_class, confidence, all_probabilities = run_prediction(
@@ -102,28 +126,39 @@ def predict():
             class_names=CLASS_NAMES,
         )
 
-        target_layer = get_gradcam_target_layer(model)
+        grad_cam_base64 = None
+        grad_cam_error = None
 
-        grad_cam_base64 = generate_gradcam_base64(
-            model=model,
-            target_layer=target_layer,
-            input_tensor=input_tensor,
-            target_class_idx=pred_idx,
-            original_rgb=original_rgb,
-        )
+        try:
+            target_layer = get_gradcam_target_layer(model)
+            grad_cam_base64 = generate_gradcam_base64(
+                model=model,
+                target_layer=target_layer,
+                input_tensor=input_tensor,
+                target_class_idx=pred_idx,
+                original_rgb=original_rgb,
+            )
+        except Exception as grad_exc:
+            grad_cam_error = str(grad_exc)
+            if IS_DEBUG:
+                grad_cam_error = f"{grad_exc}\n{traceback.format_exc()}"
 
-        return jsonify(
-            {
-                "predicted_class": predicted_class,
-                "confidence": confidence,
-                "all_probabilities": all_probabilities,
-                "grad_cam_base64": grad_cam_base64,
-            }
-        ), 200
+        payload = {
+            "predicted_class": predicted_class,
+            "confidence": confidence,
+            "all_probabilities": all_probabilities,
+            "grad_cam_base64": grad_cam_base64,
+        }
+
+        if grad_cam_error:
+            payload["grad_cam_error"] = grad_cam_error
+
+        return jsonify(payload), 200
 
     except FileNotFoundError:
         payload = {
             "error": "Model checkpoint not found.",
+            "type": "FileNotFoundError",
         }
         if IS_DEBUG:
             payload["model_path"] = MODEL_PATH
@@ -137,6 +172,16 @@ def predict():
         if IS_DEBUG:
             payload["traceback"] = traceback.format_exc()
         return jsonify(payload), 500
+
+    finally:
+        try:
+            del input_tensor
+            del original_rgb
+        except Exception:
+            pass
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":
