@@ -8,9 +8,9 @@ import torch.nn as nn
 from torchvision import transforms
 from efficientnet_pytorch import EfficientNet
 
-
 CLASS_NAMES = ["glioma", "meningioma", "pituitary", "notumor"]
 IMAGE_SIZE = (224, 224)
+OVERLAY_MAX_SIDE = int(os.environ.get("OVERLAY_MAX_SIDE", "512"))
 
 INFERENCE_TRANSFORM = transforms.Compose(
     [
@@ -28,8 +28,6 @@ class BrainTumorClassifier(nn.Module):
     def __init__(self, num_classes: int):
         super().__init__()
         self.backbone = EfficientNet.from_name("efficientnet-b0")
-
-        # Temporary placeholder; real head can be replaced from checkpoint.
         in_features = self.backbone._fc.in_features
         self.backbone._fc = nn.Linear(in_features, num_classes)
 
@@ -53,17 +51,7 @@ def _extract_state_dict(checkpoint: object) -> dict:
 
 
 def _rebuild_fc_from_checkpoint(model: nn.Module, state_dict: dict) -> None:
-    """
-    If checkpoint uses a sequential EfficientNet head like:
-      backbone._fc.0 = BatchNorm1d
-      backbone._fc.2 = Linear
-      backbone._fc.4 = BatchNorm1d
-      backbone._fc.6 = Linear
-    then rebuild model.backbone._fc to match those saved shapes exactly.
-    """
     keys = state_dict.keys()
-
-    # Detect the sequential head pattern.
     has_seq_head = (
         "backbone._fc.0.weight" in keys
         and "backbone._fc.2.weight" in keys
@@ -79,7 +67,6 @@ def _rebuild_fc_from_checkpoint(model: nn.Module, state_dict: dict) -> None:
     bn4_features = state_dict["backbone._fc.4.weight"].shape[0]
     lin6_out = state_dict["backbone._fc.6.weight"].shape[0]
 
-    # Linear weight shape is [out_features, in_features]
     lin2_in = state_dict["backbone._fc.2.weight"].shape[1]
     lin6_in = state_dict["backbone._fc.6.weight"].shape[1]
 
@@ -93,13 +80,13 @@ def _rebuild_fc_from_checkpoint(model: nn.Module, state_dict: dict) -> None:
         )
 
     model.backbone._fc = nn.Sequential(
-        nn.BatchNorm1d(bn0_features),   # 0
-        nn.ReLU(inplace=True),          # 1
-        nn.Linear(lin2_in, lin2_out),   # 2
-        nn.ReLU(inplace=True),          # 3
-        nn.BatchNorm1d(bn4_features),   # 4
-        nn.ReLU(inplace=True),          # 5
-        nn.Linear(lin6_in, lin6_out),   # 6
+        nn.BatchNorm1d(bn0_features),
+        nn.ReLU(inplace=True),
+        nn.Linear(lin2_in, lin2_out),
+        nn.ReLU(inplace=True),
+        nn.BatchNorm1d(bn4_features),
+        nn.ReLU(inplace=True),
+        nn.Linear(lin6_in, lin6_out),
     )
 
 
@@ -121,9 +108,7 @@ def load_checkpoint_into_model(
             new_key = new_key[len("module."):]
         cleaned_state_dict[new_key] = value
 
-    # Rebuild the classifier head to match checkpoint structure before loading.
     _rebuild_fc_from_checkpoint(model, cleaned_state_dict)
-
     missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=True)
 
     if missing or unexpected:
@@ -139,12 +124,24 @@ def get_gradcam_target_layer(model: nn.Module) -> nn.Module:
     return model.backbone._conv_head
 
 
+def _resize_rgb_for_overlay(image: Image.Image, max_side: int = OVERLAY_MAX_SIDE) -> Image.Image:
+    image = image.convert("RGB")
+    width, height = image.size
+    longest = max(width, height)
+    if longest <= max_side:
+        return image.copy()
+    scale = max_side / float(longest)
+    new_size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
+    return image.resize(new_size, Image.Resampling.LANCZOS)
+
+
 def prepare_image(
     image: Image.Image,
     device: torch.device,
 ) -> Tuple[torch.Tensor, np.ndarray]:
     image = image.convert("RGB")
-    original_rgb = np.array(image)
+    overlay_image = _resize_rgb_for_overlay(image, max_side=OVERLAY_MAX_SIDE)
+    original_rgb = np.asarray(overlay_image, dtype=np.uint8).copy()
     input_tensor = INFERENCE_TRANSFORM(image).unsqueeze(0).to(device)
     return input_tensor, original_rgb
 
@@ -157,7 +154,7 @@ def run_prediction(
 ) -> Tuple[int, str, float, Dict[str, float]]:
     model.eval()
     logits = model(input_tensor)
-    probabilities = torch.softmax(logits, dim=1)[0].cpu().numpy()
+    probabilities = torch.softmax(logits, dim=1)[0].detach().cpu().numpy()
 
     pred_idx = int(np.argmax(probabilities))
     predicted_class = class_names[pred_idx]
